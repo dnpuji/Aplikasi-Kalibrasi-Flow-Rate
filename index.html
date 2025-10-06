@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Aplikasi Kalibrasi Flow Rate</title>
+  <meta name="description" content="Hitung flow rate per nozzle dan total dari target water rate, jumlah nozzle, jarak antar nozzle, dan kecepatan traktor." />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <meta name="theme-color" content="#0ea5e9" />
+  <style>
+    :root{--bg:#0b1020;--panel:#0f172a;--muted:#94a3b8;--text:#e2e8f0;--accent:#0ea5e9;--ok:#22c55e;--warn:#f59e0b;--err:#ef4444}
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;background:linear-gradient(180deg,#0b1020,#0a0f1c);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,'Helvetica Neue',Arial,'Apple Color Emoji','Segoe UI Emoji';}
+    .container{max-width:920px;margin:0 auto;padding:24px}
+    .card{background:linear-gradient(180deg,#0f172a,#0b1224);border:1px solid #233256;border-radius:16px;padding:20px;box-shadow:0 10px 30px rgba(0,0,0,0.35)}
+    h1{font-size:clamp(20px,2.5vw,28px);margin:0 0 8px}
+    p.lead{margin:0 0 18px;color:var(--muted)}
+    .grid{display:grid;grid-template-columns:1fr;gap:14px}
+    @media(min-width:720px){.grid{grid-template-columns:repeat(2,1fr)}}
+    label{display:block;font-size:14px;color:#cbd5e1;margin-bottom:6px}
+    input,select{width:100%;background:#0b1224;border:1px solid #1e293b;color:var(--text);padding:12px;border-radius:12px;outline:none}
+    input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(14,165,233,0.2)}
+    .row{display:flex;gap:10px;align-items:center}
+    .unit{min-width:92px}
+    .actions{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+    button{cursor:pointer;border:0;padding:12px 14px;border-radius:12px}
+    .primary{background:var(--accent);color:#001826;font-weight:600}
+    .ghost{background:#0b1224;color:var(--text);border:1px solid #1e293b}
+    .muted{color:var(--muted)}
+    .result{margin-top:18px;display:grid;gap:10px}
+    .kpi{background:#0b1224;border:1px solid #1e293b;border-radius:14px;padding:14px}
+    .kpi h3{margin:0 0 4px;font-size:16px;color:#cbd5e1}
+    .kpi .val{font-size:26px;font-weight:700}
+    .badge{display:inline-block;padding:4px 8px;border-radius:999px;font-size:12px;border:1px solid #1e293b;background:#0b1224;color:#cbd5e1}
+    footer{margin-top:28px;font-size:12px;color:#93a3b8}
+    .error{color:var(--err);font-size:13px}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>Kalibrasi Flow Rate Nozzle</h1>
+      <p class="lead">Masukkan target <b>water rate</b>, <b>jumlah nozzle</b>, <b>jarak antar nozzle</b>, dan <b>kecepatan traktor</b> untuk menghitung <i>flow</i> per nozzle & total.</p>
+
+      <div class="grid" id="form">
+        <div>
+          <label>Water Rate (L/ha)</label>
+          <input id="rate" type="number" min="0" step="0.01" placeholder="mis. 200" />
+        </div>
+        <div>
+          <label>Jumlah Nozzle (unit)</label>
+          <input id="nozzles" type="number" min="1" step="1" placeholder="mis. 12" />
+        </div>
+        <div>
+          <label>Jarak antar nozzle</label>
+          <div class="row">
+            <input id="spacing" type="number" min="0" step="0.001" placeholder="mis. 0.5" />
+            <select id="spacingUnit" class="unit">
+              <option value="m">meter (m)</option>
+              <option value="cm">centimeter (cm)</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label>Kecepatan traktor</label>
+          <div class="row">
+            <input id="speed" type="number" min="0" step="0.01" placeholder="mis. 6" />
+            <select id="speedUnit" class="unit">
+              <option value="kmh">km/jam</option>
+              <option value="mph">mil/jam (mph)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="primary" id="calcBtn">Hitung Flow</button>
+        <button class="ghost" id="resetBtn">Reset</button>
+        <span class="badge" id="statusPWA">Mode: Online</span>
+      </div>
+      <div class="error" id="err"></div>
+
+      <div class="result">
+        <div class="kpi">
+          <h3>Flow per nozzle</h3>
+          <div class="val" id="perNozzle">—</div>
+          <div class="muted">Satuan: L/menit</div>
+        </div>
+        <div class="kpi">
+          <h3>Total flow</h3>
+          <div class="val" id="totalFlow">—</div>
+          <div class="muted">Satuan: L/menit</div>
+        </div>
+      </div>
+
+      <footer>
+        Rumus: <code>Flow/nozzle (L/min) = (Rate × Speed × Spacing) / 600</code>. Pastikan satuan: Rate=L/ha, Speed=km/h, Spacing=m.
+      </footer>
+    </div>
+  </div>
+
+  <script>
+    // Utility konversi
+    function toMeters(val, unit){
+      if(!isFinite(val)) return NaN;
+      return unit === 'cm' ? val / 100 : val; // default m
+    }
+    function toKmH(val, unit){
+      if(!isFinite(val)) return NaN;
+      return unit === 'mph' ? val * 1.609344 : val; // default km/h
+    }
+
+    function round(x){
+      if(!isFinite(x)) return NaN;
+      return Math.round(x * 1000) / 1000; // 3 desimal
+    }
+
+    function compute(){
+      const rate = parseFloat(document.getElementById('rate').value);
+      const nozz = parseInt(document.getElementById('nozzles').value,10);
+      const spacingRaw = parseFloat(document.getElementById('spacing').value);
+      const spacingUnit = document.getElementById('spacingUnit').value;
+      const speedRaw = parseFloat(document.getElementById('speed').value);
+      const speedUnit = document.getElementById('speedUnit').value;
+      const err = document.getElementById('err');
+      err.textContent = '';
+
+      if(!(rate>0) || !(nozz>0) || !(spacingRaw>0) || !(speedRaw>0)){
+        err.textContent = 'Lengkapi semua input dengan nilai > 0.';
+        return { per: NaN, total: NaN };
+      }
+
+      const spacing = toMeters(spacingRaw, spacingUnit);
+      const speed = toKmH(speedRaw, speedUnit);
+
+      // Rumus utama
+      const perNozzleLmin = (rate * speed * spacing) / 600;
+      const totalLmin = perNozzleLmin * nozz;
+
+      return { per: perNozzleLmin, total: totalLmin };
+    }
+
+    function format(val){
+      if(!isFinite(val)) return '—';
+      return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 3 }).format(val);
+    }
+
+    document.getElementById('calcBtn').addEventListener('click', ()=>{
+      const { per, total } = compute();
+      document.getElementById('perNozzle').textContent = format(per);
+      document.getElementById('totalFlow').textContent = format(total);
+    });
+
+    document.getElementById('resetBtn').addEventListener('click', ()=>{
+      for(const id of ['rate','nozzles','spacing','speed']){
+        const el = document.getElementById(id); el.value = '';
+      }
+      document.getElementById('perNozzle').textContent = '—';
+      document.getElementById('totalFlow').textContent = '—';
+      document.getElementById('err').textContent = '';
+      document.getElementById('spacingUnit').value = 'm';
+      document.getElementById('speedUnit').value = 'kmh';
+    });
+
+    // PWA status badge
+    function updateStatus(){
+      const badge = document.getElementById('statusPWA');
+      badge.textContent = 'Mode: ' + (navigator.onLine ? 'Online' : 'Offline');
+    }
+    window.addEventListener('online', updateStatus);
+    window.addEventListener('offline', updateStatus);
+    updateStatus();
+
+    // Service Worker daftarkan jika tersedia
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./service-worker.js')
+          .catch(err => console.log('SW register failed', err));
+      });
+    }
+  </script>
+</body>
+</html>
